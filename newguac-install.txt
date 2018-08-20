@@ -1,0 +1,73 @@
+#!/bin/bash
+# Newguac on CentOS7
+# Depends on guac-master.sh, AWS CLI, RDS MySQL instance, Instance provisioned with NewGuac-Linux-wSTIG.yml CF template, MySQL backup file provided from existing Guac
+# Source this script from the master script which contians the necessary variables
+
+#Install Requirements
+yum makecache fast
+yum -y update
+yum install -y yum-utils device-mapper-persistent-data lvm2 mysql wget curl yum-cron
+yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+
+#swap firewalld to iptables
+#reference https://www.digitalocean.com/community/tutorials/how-to-migrate-from-firewalld-to-iptables-on-centos-7
+mkdir /var/lock/subsys
+systemctl stop firewalld
+systemctl disable firewalld
+yum -y install iptables-services
+systemctl start iptables && systemctl enable iptables
+
+#Install Docker
+yum -y install docker-ce
+
+#set docker to use /opt/extra/docker instead of /var/lib
+#reference https://linuxconfig.org/how-to-move-docker-s-default-var-lib-docker-to-another-directory-on-ubuntu-debian-linux
+mkdir /opt/extra/docker
+cp -R /var/lib/docker/* /opt/extra/docker/
+rm -rf /var/lib/docker
+ln -s /opt/extra/docker /var/lib/docker
+
+#Start and enable docker, then set cloudwatch logging and restart docker
+systemctl enable docker
+systemctl start docker
+aws s3 cp s3://newguac/daemon.json /etc/docker/daemon.json
+systemctl restart docker
+
+#Database setup
+# Only needed when deploying the initial Guac instance
+# . newguac-database.sh
+
+#Create guacamole home and extensions directories and populate them
+mkdir -p /opt/extra/guachome/extensions
+aws s3 cp s3://newguac/guac-extensions.jar /opt/extra/guachome/extensions/guac-extensions.jar
+aws s3 cp s3://newguac/guacamole.properties /opt/extra/guachome/guacamole.properties
+chmod 400 /opt/extra/guachome/extensions/guac-extensions.jar
+chmod 400 /opt/extra/guachome/guacamole.properties
+
+##next version, use compose to launch guac
+#Launch guacd container
+docker run --restart=always --name guacd -d guacamole/guacd
+
+#Launch guacamole container
+docker run --restart=always --name guacamole --link guacd:guacd -e MYSQL_HOSTNAME=$GUACDBDNS -e MYSQL_DATABASE=TTEGuacamoleDB -e MYSQL_USER=$GUACDBUSERNAME -e MYSQL_PASSWORD=$GUACDBUSERPASSWORD -v /opt/extra/guachome:/opt/extra/guachome:ro -e GUACAMOLE_HOME=/opt/extra/guachome --detach -p 8080:8080 guacamole/guacamole
+
+#install cron job to periodically wipe tomcat webapps that may get recreated with various docker operations that rebuild the guacamole container from scratch
+aws s3 cp s3://newguac/tomcatwipe.cron /etc/cron.hourly/tomcatwipe.cron
+chmod 500 /etc/cron.hourly/tomcatwipe.cron
+
+#Enable yum cron to auto apply security patches
+sed -i 's/update_cmd = default/update_cmd = security/g' /etc/yum/yum-cron.conf
+sed -i 's/apply_updates = no/apply_updates = yes/g' /etc/yum/yum-cron.conf
+systemctl restart yum-cron.service
+
+#Disable FIPS if enabled so that yum-cron and cloudwatch agent will work
+fipsvalue=`cat /proc/sys/crypto/fips_enabled`
+if [ $fipsvalue -gt 0 ]
+then
+  sed -i 's/fips=1/fips=0/' /etc/default/grub
+  grub2-mkconfig > /boot/grub2/grub.cfg
+  reboot
+fi
+
+
+

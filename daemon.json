@@ -1,0 +1,8 @@
+{
+  "log-driver": "awslogs",
+  "log-opts": {
+    "awslogs-region": "us-gov-west-1",
+	"awslogs-group": "GuacDockerLogs",
+	"awslogs-create-group": "true"
+  }
+}

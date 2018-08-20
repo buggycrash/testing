@@ -1,0 +1,17 @@
+{
+    "Version": "2012-10-17",
+    "Id": "Policy15013608",
+    "Statement": [
+        {
+            "Sid": "Stmt1501360",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": [
+                    "arn:aws-us-gov:iam::037629338752:role/UTTE-INSTANCE-S3"
+                ]
+            },
+            "Action": "s3:*",
+            "Resource": "arn:aws-us-gov:s3:::newguac/*"
+        }
+    ]
+}

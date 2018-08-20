@@ -1,0 +1,132 @@
+#!/bin/bash
+# Newguac on CentOS7
+# Depends on RDS MySQL instance, Instance provisioned with NewGuac-Linux-wSTIG.yml CF template, MySQL backup file provided from existing Guac
+
+#set variables
+VERSION="0.9.13"
+echo 
+read -s -p "Enter the username that will be used for MySQL Root account: " MYSQLROOTUSERNAME 
+echo
+read -s -p "Enter the password that will be used for MySQL Root account: " MYSQLROOTPASSWORD
+echo
+read -s -p "Enter the username that will be used for the Guacamole database: " GUACDBUSERNAME
+echo
+read -s -p "Enter the password that will be used for the Guacamole database: " GUACDBUSERPASSWORD
+echo
+read -s -p "Enter the DNS name that will be used to access the Guacamole database: " GUACDBDNS
+echo
+
+#Install Requirements
+yum makecache fast
+yum -y update
+yum install -y yum-utils device-mapper-persistent-data lvm2 mysql wget curl
+yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+#Implement CloudWatch Logging
+#cd /opt/extra
+#curl https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py -O 
+#curl https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/AgentDependencies.tar.gz -O
+#tar xvf AgentDependencies.tar.gz -C /tmp/
+#export PIP_INDEX_URL=https://pypi.org/simple/ ; pip install --upgrade pip
+#pip install virtualenv
+#python /opt/extra/awslogs-agent-setup.py --region us-gov-west-1 --dependency-path /tmp/AgentDependencies
+#FIPS mode breaks the CloudWatch Logs sender
+#Disable FIPS in grub2 by removing "fips=1" from the kernel line, regenerating grub.cfg, and rebooting
+#How to edit Grub2 http://www.unixarena.com/2015/04/how-to-edit-the-grub-on-rhel-7.html
+#Obviously disablng FIPS in Production is not an option
+#Need to build a settings file for setup first, otherwise install is very manual
+#OR, just enable the docker containers to log to AWS directly
+#$ docker run --log-driver=awslogs \
+#             --log-opt awslogs-region=us-gov-west-1 \
+#             --log-opt awslogs-group=GuacDockerLogs \
+#             --log-opt awslogs-create-group=true \
+
+yum -y install docker-ce
+
+#swap firewalld to iptables
+#reference https://www.digitalocean.com/community/tutorials/how-to-migrate-from-firewalld-to-iptables-on-centos-7
+mkdir /var/lock/subsys
+systemctl stop firewalld
+systemctl disable firewalld
+yum -y install iptables-services
+systemctl start iptables && systemctl enable iptables
+
+
+#set docker to use /opt/extra/docker instead of /var/lib
+#reference https://linuxconfig.org/how-to-move-docker-s-default-var-lib-docker-to-another-directory-on-ubuntu-debian-linux
+mkdir /opt/extra/docker
+cp -R /var/lib/docker/* /opt/extra/docker/
+rm -rf /var/lib/docker
+ln -s /opt/extra/docker /var/lib/docker
+
+systemctl enable docker
+systemctl start docker
+
+#SERVER=$(curl -s 'https://www.apache.org/dyn/closer.cgi?as_json=1' | jq --raw-output '.preferred|rtrimstr("/")')
+SERVER="http://mirrors.sonic.net/apache/"
+
+
+
+
+
+
+# Start MySQL
+#unneeded since using RDS
+#docker run --restart=always --detach --name=mysql --env="MYSQL_ROOT_PASSWORD=$MYSQLROOTPASSWORD" --publish 3306:3306 mysql
+
+# Create the Guacamole database and the user account
+# Won't need this for production efforts.  Instead will migrate existing database to RDS and update the schema
+
+
+# SQL Code
+# Won't need this for Production, as the database and account will be part of the restoration
+# See docker-guac.notes for details
+#SQLCODE="
+#create database guacamole_db;
+#create user 'guacamole_user'@'%' identified by '$GUACDBUSERPASSWORD';
+#GRANT SELECT,INSERT,UPDATE,DELETE ON guacamole_db.* TO 'guacamole_user'@'%';
+#flush privileges;"
+
+# Execute SQL Code
+# Comment out the echo line, but leave the cat line to upgrade the schema
+# Change username and database name to fit existing
+#echo $SQLCODE | mysql -h guac-data.cb0upjasogcj.us-gov-west-1.rds.amazonaws.com -P 3306 -u guac_auth -p$MYSQLROOTPASSWORD
+
+#Create Guac DB, Guac User, Restore from backup
+# May need to test exact method for delimiting variables in quotes
+aws s3 cp s3://newguac/backupTTEguacDB.sql /opt/extra/backupTTEguacDB.sql
+mysqladmin -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD create TTEGuacamoleDB
+echo "GRANT SELECT,INSERT,UPDATE,DELETE ON TTEGuacamoleDB.* TO '$GUACDBUSERNAME'@'%';" | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD
+mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD TTEGuacamoleDB < backupTTEguacDB.sql
+rm /opt/extra/backupTTEguacDB.sql
+
+# Download the guacamole auth files for MySQL
+cd /opt/extra
+wget ${SERVER}/incubator/guacamole/${VERSION}-incubating/binary/guacamole-auth-jdbc-${VERSION}-incubating.tar.gz
+tar -xzf guacamole-auth-jdbc-${VERSION}-incubating.tar.gz
+#cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/*.sql | mysql -u guac_auth -p$MYSQLROOTPASSWORD -h guac-data.cb0upjasogcj.us-gov-west-1.rds.amazonaws.com -P 3306 guacamole_db
+# cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade-pre-0.9.[10-13].sql | mysql -h $GUACDBDNS --ssl -u $GUACDBUSERNAME -p$GUACDBUSERPASSWORD TTEGuacamoleDB
+
+cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade-pre-0.9.10.sql | mysql -h guac-data.cb0upjasogcj.us-gov-west-1.rds.amazonaws.com --ssl -u guacamole_user -p TTEGuacamoleDB
+cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade-pre-0.9.11.sql | mysql -h guac-data.cb0upjasogcj.us-gov-west-1.rds.amazonaws.com --ssl -u guacamole_user -p TTEGuacamoleDB
+cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade-pre-0.9.12.sql | mysql -h guac-data.cb0upjasogcj.us-gov-west-1.rds.amazonaws.com --ssl -u guacamole_user -p TTEGuacamoleDB
+cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade-pre-0.9.13.sql | mysql -h guac-data.cb0upjasogcj.us-gov-west-1.rds.amazonaws.com --ssl -u guacamole_user -p TTEGuacamoleDB
+rm -rf guacamole-auth-jdbc-${VERSION}-incubating*
+
+#Create extensions directory and populate it
+mkdir -p /opt/extra/guachome/extensions
+aws s3 cp s3://newguac/guac-extensions.jar /opt/extra/guachome/extensions/guac-extensions.jar
+chmod 400 /opt/extra/guachome/extensions/guac-extensions.jar
+
+#Launch guacd container
+docker run --restart=always --name guacd -d guacamole/guacd
+
+#Launch guacamole container
+# Change user and password to pull from variables entered earlier above
+docker run --restart=always --name guacamole --link guacd:guacd -e MYSQL_HOSTNAME=$GUACDBDNS -e MYSQL_DATABASE=TTEGuacamoleDB -e MYSQL_USER=$GUACDBUSERNAME -e MYSQL_PASSWORD=$GUACDBUSERPASSWORD -v /opt/extra/guachome:/opt/extra/guachome:ro -e GUACAMOLE_HOME=/opt/extra/guachome --detach -p 8080:8080 guacamole/guacamole
+
+#install cron job to periodically wipe tomcat webapps that may get recreated with various docker operations that rebuild the guacamole container from scratch
+aws s3 cp s3://newguac/tomcatwipe.cron /etc/cron.hourly/tomcatwipe.cron
+chmod 500 /etc/cron.hourly/tomcatwipe.cron
+
+
+

@@ -1,0 +1,26 @@
+#!/bin/bash
+#guac initial database setup
+
+#Database setup
+#Wipe existing DB and User, Create Guac DB, Guac User, Grant Privs, Restore from backup, Delete local backup file
+aws s3 cp s3://newguac/backupTTEguacDB.sql /opt/extra/backupTTEguacDB.sql
+mysqladmin -f -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD drop TTEGuacamoleDB
+echo "drop user '$GUACDBUSERNAME'@'%';" | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD
+mysqladmin -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD create TTEGuacamoleDB
+echo "create user '$GUACDBUSERNAME'@'%' identified by '$GUACDBUSERPASSWORD';" | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD
+echo "GRANT SELECT,INSERT,UPDATE,DELETE ON TTEGuacamoleDB.* TO '$GUACDBUSERNAME'@'%';" | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD
+echo "flush privileges;" | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD
+mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD TTEGuacamoleDB < backupTTEguacDB.sql
+rm /opt/extra/backupTTEguacDB.sql
+
+# Download the guacamole auth files for MySQL
+cd /opt/extra
+wget ${SERVER}/incubator/guacamole/${VERSION}-incubating/binary/guacamole-auth-jdbc-${VERSION}-incubating.tar.gz
+tar -xvf guacamole-auth-jdbc-${VERSION}-incubating.tar.gz
+
+# Update the database schema to the verion of Guac being installed
+cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade/upgrade-pre-0.9.10.sql | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD TTEGuacamoleDB
+cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade/upgrade-pre-0.9.11.sql | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD TTEGuacamoleDB
+cat guacamole-auth-jdbc-${VERSION}-incubating/mysql/schema/upgrade/upgrade-pre-0.9.13.sql | mysql -h $GUACDBDNS --ssl -u $MYSQLROOTUSERNAME -p$MYSQLROOTPASSWORD TTEGuacamoleDB
+#remove auth download
+rm -rf guacamole-auth-jdbc-${VERSION}-incubating*

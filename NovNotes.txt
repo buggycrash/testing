@@ -1,0 +1,8 @@
+daemon.json not working
+yum-cron not working maybe due to FIPS, but FIPS is not enabled
+database schema not fully up to date
+
+Password policies can be inforced via guacamole.properties file.  Not sure how to use this file in Docker container.  See reference here:
+https://guacamole.incubator.apache.org/doc/gug/jdbc-auth.html
+Looks like I have already made GUACHOME external to the container (GUACAMOLE_HOME=/opt/extra/guachome) so I can place a properteies file there, and restart docker.
+
